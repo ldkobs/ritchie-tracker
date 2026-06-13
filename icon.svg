@@ -1,0 +1,16 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="200" rx="45" fill="#BD3039"/>
+  <circle cx="100" cy="100" r="66" fill="white"/>
+  <!-- Left seam -->
+  <path d="M62,78 C54,92 54,108 62,122" fill="none" stroke="#BD3039" stroke-width="6" stroke-linecap="round"/>
+  <path d="M75,70 C65,88 65,112 75,130" fill="none" stroke="#BD3039" stroke-width="6" stroke-linecap="round"/>
+  <line x1="62" y1="87"  x2="75" y2="82"  stroke="#BD3039" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="62" y1="100" x2="75" y2="100" stroke="#BD3039" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="62" y1="113" x2="75" y2="118" stroke="#BD3039" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Right seam -->
+  <path d="M138,78 C146,92 146,108 138,122" fill="none" stroke="#BD3039" stroke-width="6" stroke-linecap="round"/>
+  <path d="M125,70 C135,88 135,112 125,130" fill="none" stroke="#BD3039" stroke-width="6" stroke-linecap="round"/>
+  <line x1="138" y1="87"  x2="125" y2="82"  stroke="#BD3039" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="138" y1="100" x2="125" y2="100" stroke="#BD3039" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="138" y1="113" x2="125" y2="118" stroke="#BD3039" stroke-width="3.5" stroke-linecap="round"/>
+</svg>
