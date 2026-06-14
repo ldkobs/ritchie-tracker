@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-import os, json, requests
+import os, json, time, requests
 from datetime import datetime, timezone
 
-PLAYER_ID  = 702275   # JR Ritchie
-TEAM_ID    = '144'    # Atlanta Braves
-STATE_FILE = 'poller/state.json'
-MLB        = 'https://statsapi.mlb.com/api/v1'
+PLAYER_ID     = 702275   # JR Ritchie
+TEAM_ID       = '144'    # Atlanta Braves
+STATE_FILE    = 'poller/state.json'
+MLB           = 'https://statsapi.mlb.com/api/v1'
+POLL_INTERVAL = 30       # seconds between checks
+LOOP_DURATION = 270      # run for 4.5 min so 5-min cron jobs don't overlap
 
 def mlb(path, **params):
     try:
@@ -104,24 +106,7 @@ def save_state(s):
     with open(STATE_FILE, 'w') as f:
         json.dump(s, f)
 
-def main():
-    wh    = os.environ.get('SLACK_WEBHOOK_URL', '')
-    state = load_state()
-
-    # Test mode — sends a dummy Slack ping to verify the webhook works
-    if os.environ.get('TEST_MODE', '').lower() == 'true':
-        post_slack(wh, {
-            'text': '✅ Ritchie Tracker is connected!',
-            'blocks': [
-                {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Ritchie Tracker — Test Successful', 'emoji': True}},
-                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll be notified automatically whenever J.R. Ritchie enters a game.'}},
-                {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 5 min · noon–midnight ET · ldkobs/ritchie-tracker'}]}
-            ]
-        })
-        print('Test message sent.')
-        return
-
-    # Find today's ATL game
+def poll_once(state, wh):
     d     = mlb('schedule', sportId=1, date=today(), hydrate='linescore,team')
     games = ((d or {}).get('dates') or [{}])[0].get('games', [])
     game  = next((g for g in games
@@ -129,10 +114,8 @@ def main():
                                   str(g['teams']['away']['team']['id']))), None)
 
     if not game or game_state(game) not in ('live', 'final'):
-        save_state(state)
         return
 
-    # Full live feed
     try:
         feed = requests.get(
             f'https://statsapi.mlb.com/api/v1.1/game/{game["gamePk"]}/feed/live',
@@ -152,28 +135,55 @@ def main():
     inn      = inn_txt(ls)
     cur_idx  = (cur_play or {}).get('atBatIndex', -1)
 
-    # Entry notification
     if is_cur and not state['entry_sent']:
         post_slack(wh, msg_entry(game, inn))
         state['entry_sent'] = True
         state['is_pitching'] = True
+        print(f'Entry sent — {inn}')
 
-    # At-bat result notification
     if is_cur and state['last_ab_idx'] >= 0 and cur_idx != state['last_ab_idx']:
         prev = next((p for p in all_plays if p.get('atBatIndex') == state['last_ab_idx']), None)
         if prev and prev.get('result', {}).get('eventType'):
             post_slack(wh, msg_ab(prev, outing, inn))
+            print(f"AB sent — {prev.get('result',{}).get('event')} by {prev.get('matchup',{}).get('batter',{}).get('fullName','?')}")
 
     if is_cur:
         state['last_ab_idx'] = cur_idx
         state['is_pitching'] = True
 
-    # Outing finished notification
     if not is_cur and state['is_pitching'] and my_done:
         post_slack(wh, msg_done(outing, game))
         state['is_pitching'] = False
+        print(f"Done sent — {outing['ip']} IP · {outing['k']}K · {outing['r']}R")
 
     state['date'] = today()
+
+def main():
+    wh = os.environ.get('SLACK_WEBHOOK_URL', '')
+
+    if os.environ.get('TEST_MODE', '').lower() == 'true':
+        post_slack(wh, {
+            'text': '✅ Ritchie Tracker is connected!',
+            'blocks': [
+                {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Ritchie Tracker — Test Successful', 'emoji': True}},
+                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll be notified automatically whenever J.R. Ritchie enters a game.'}},
+                {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 30 sec · noon–midnight ET · ldkobs/ritchie-tracker'}]}
+            ]
+        })
+        print('Test message sent.')
+        return
+
+    state = load_state()
+    start = time.time()
+
+    while True:
+        poll_once(state, wh)
+        elapsed = time.time() - start
+        if elapsed + POLL_INTERVAL >= LOOP_DURATION:
+            break
+        print(f'Sleeping 30s ({int(LOOP_DURATION - elapsed)}s remaining)…')
+        time.sleep(POLL_INTERVAL)
+
     save_state(state)
 
 if __name__ == '__main__':
