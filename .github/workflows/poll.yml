@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: 'Send a test Slack message'
+        description: 'Send a connection test message'
+        type: boolean
+        default: false
+      test_game:
+        description: 'Simulate a full outing (entry → at-bat → done)'
         type: boolean
         default: false
 
@@ -31,6 +35,7 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           TEST_MODE: ${{ inputs.test }}
+          TEST_GAME: ${{ inputs.test_game }}
         run: python poller/check_ritchie.py
 
       - name: Save state

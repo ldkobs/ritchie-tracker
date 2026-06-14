@@ -173,6 +173,35 @@ def main():
         print('Test message sent.')
         return
 
+    if os.environ.get('TEST_GAME', '').lower() == 'true':
+        fake_game = {'teams': {'away': {'team': {'name': 'Milwaukee Brewers'}, 'score': 2},
+                               'home': {'team': {'name': 'Atlanta Braves'},    'score': 3}}}
+        fake_plays = [
+            {'result': {'eventType': 'strikeout',   'event': 'Strikeout'},   'matchup': {'batter': {'fullName': 'C. Yelich'}}},
+            {'result': {'eventType': 'single',      'event': 'Single'},      'matchup': {'batter': {'fullName': 'W. Contreras'}}},
+            {'result': {'eventType': 'intent_walk', 'event': 'Intent Walk'}, 'matchup': {'batter': {'fullName': 'S. Wiemer'}}},
+        ]
+        outings = [
+            dict(ip='0.1', k=1, bb=0, h=0, r=0),
+            dict(ip='0.2', k=1, bb=0, h=1, r=0),
+            dict(ip='0.2', k=1, bb=1, h=1, r=0),
+        ]
+        final_outing = dict(ip='1.0', k=2, bb=1, h=1, r=0)
+
+        print('Sending entry…')
+        post_slack(wh, msg_entry(fake_game, '▼7'))
+        time.sleep(8)
+
+        for play, outing in zip(fake_plays, outings):
+            print(f"Sending AB: {play['result']['event']}…")
+            post_slack(wh, msg_ab(play, outing, '▼7'))
+            time.sleep(8)
+
+        print('Sending outing complete…')
+        post_slack(wh, msg_done(final_outing, fake_game))
+        print('Simulation done.')
+        return
+
     state = load_state()
     start = time.time()
 
