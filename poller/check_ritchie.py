@@ -108,6 +108,19 @@ def main():
     wh    = os.environ.get('SLACK_WEBHOOK_URL', '')
     state = load_state()
 
+    # Test mode — sends a dummy Slack ping to verify the webhook works
+    if os.environ.get('TEST_MODE', '').lower() == 'true':
+        post_slack(wh, {
+            'text': '✅ Ritchie Tracker is connected!',
+            'blocks': [
+                {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Ritchie Tracker — Test Successful', 'emoji': True}},
+                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll be notified automatically whenever J.R. Ritchie enters a game.'}},
+                {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 5 min · noon–midnight ET · ldkobs/ritchie-tracker'}]}
+            ]
+        })
+        print('Test message sent.')
+        return
+
     # Find today's ATL game
     d     = mlb('schedule', sportId=1, date=today(), hydrate='linescore,team')
     games = ((d or {}).get('dates') or [{}])[0].get('games', [])
