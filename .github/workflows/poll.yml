@@ -1,0 +1,36 @@
+name: Ritchie Poller
+
+on:
+  schedule:
+    - cron: '*/5 15-23,0-4 * * *'   # every 5 min, noon–midnight ET
+  workflow_dispatch:                  # allow manual trigger from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests
+
+      - name: Poll MLB API
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python poller/check_ritchie.py
+
+      - name: Save state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add poller/state.json
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: poller state [skip ci]"
+            git push
+          fi
