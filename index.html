@@ -383,6 +383,42 @@
     .install-close { background: none; border: none; color: var(--dim); font-size: 20px;
       cursor: pointer; padding: 0; line-height: 1; }
 
+    /* ── Hero banner ─────────────────────────────────────────────────── */
+    .hero {
+      position: relative; overflow: hidden;
+      background: linear-gradient(160deg, #0d1f0a 0%, #1a3a12 50%, #0d1f0a 100%);
+      border-bottom: 1px solid rgba(42,107,26,.3);
+      padding: 22px 20px 20px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .hero-bg {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 80% 50%, rgba(189,48,57,.12) 0%, transparent 65%);
+      pointer-events: none;
+    }
+    .hero-photo {
+      width: 72px; height: 72px; border-radius: 50%; object-fit: cover;
+      border: 3px solid rgba(189,48,57,.6);
+      box-shadow: 0 0 20px rgba(189,48,57,.25);
+      flex-shrink: 0; position: relative; z-index: 1;
+    }
+    .hero-info { flex: 1; min-width: 0; position: relative; z-index: 1; }
+    .hero-name {
+      font-size: 26px; font-weight: 900; color: #fff;
+      letter-spacing: -.5px; line-height: 1; margin-bottom: 4px;
+    }
+    .hero-team { font-size: 12px; color: rgba(237,232,212,.5); margin-bottom: 8px; }
+    .hero-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .hero-tag {
+      font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 4px;
+    }
+    .hero-tag.red  { background: rgba(189,48,57,.2);  color: #e07070; border: 1px solid rgba(189,48,57,.3); }
+    .hero-tag.green{ background: rgba(42,107,26,.25); color: var(--live); border: 1px solid rgba(42,107,26,.4); }
+    .hero-num { font-size: 52px; font-weight: 900; color: rgba(255,255,255,.04);
+      position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+      letter-spacing: -4px; line-height: 1; pointer-events: none; }
+
     @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.35} }
     @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   </style>
@@ -400,6 +436,20 @@
       <button class="gear-btn" onclick="openSettings()" aria-label="Settings">⚙</button>
     </div>
   </header>
+  <div class="hero">
+    <div class="hero-bg"></div>
+    <img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/702275/headshot/67/current"
+      class="hero-photo" onerror="this.style.display='none'" alt="J.R. Ritchie">
+    <div class="hero-info">
+      <div class="hero-name">J.R. Ritchie</div>
+      <div class="hero-team">Atlanta Braves · Relief Pitcher</div>
+      <div class="hero-tags">
+        <span class="hero-tag red">RHP</span>
+        <span class="hero-tag green" id="hero-status">Monitoring</span>
+      </div>
+    </div>
+    <div class="hero-num">#57</div>
+  </div>
   <main id="main">
     <div style="padding:14px">
       <div class="shim" style="height:68px;margin-bottom:10px"></div>
@@ -718,7 +768,11 @@ function isHisTeamGame(g) {
 
 /* ── Main render ───────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
-function setLiveDot(on){$('live-dot').className='live-dot'+(on?' on':'');}
+function setLiveDot(on){
+  $('live-dot').className='live-dot'+(on?' on':'');
+  const hs=$('hero-status');
+  if(hs){hs.textContent=on?'NOW PITCHING':'Monitoring';hs.style.color=on?'var(--amber)':'';}
+}
 function setHdrSub(t){$('hdr-sub').textContent=t;}
 
 function deployNotice(){
