@@ -800,8 +800,7 @@ function rpLive(curPlay, outing, myDone, count, inn) {
       <div class="rp-board">
         <div class="rp-board-bar"></div>
         <div class="rp-head">
-          ${photoImg()}
-          <span class="rp-badge live">⚾ NOW PITCHING</span>
+<span class="rp-badge live">⚾ NOW PITCHING</span>
           <span class="rp-title">J.R. Ritchie</span>
           <span class="rp-meta">${inn} · ${count.outs} out${count.outs!==1?'s':''}</span>
         </div>
@@ -831,8 +830,7 @@ function rpDone(outing, myDone, inn) {
       <div class="rp-board">
         <div class="rp-board-bar done"></div>
         <div class="rp-head">
-          ${photoImg()}
-          <span class="rp-badge done">✓ DONE</span>
+<span class="rp-badge done">✓ DONE</span>
           <span class="rp-title">J.R. Ritchie</span>
           <span class="rp-meta">${inn}</span>
         </div>
@@ -861,8 +859,7 @@ function rpWatching(game) {
       <div class="rp-board">
         <div class="rp-board-bar idle"></div>
         <div class="rp-head">
-          ${photoImg()}
-          <span class="rp-badge watch">WATCHING</span>
+<span class="rp-badge watch">WATCHING</span>
           <span class="rp-title">${a?.team?.abbreviation||'?'} ${a?.score??0} – ${h?.score??0} ${h?.team?.abbreviation||'?'}</span>
           <span class="rp-meta">${inn}</span>
         </div>
@@ -890,8 +887,7 @@ function rpNextStart(ns, news) {
       <div class="rp-board">
         <div class="rp-board-bar next"></div>
         <div class="rp-head">
-          ${photoImg()}
-          <span class="rp-badge next">NEXT START</span>
+<span class="rp-badge next">NEXT START</span>
           <span class="rp-title">J.R. Ritchie — Probable</span>
         </div>
         <div class="rp-ns">
@@ -922,8 +918,7 @@ function rpNoAppearance() {
       <div class="rp-board">
         <div class="rp-board-bar idle"></div>
         <div class="rp-head">
-          ${photoImg()}
-          <span class="rp-badge idle">NO APPEARANCE</span>
+<span class="rp-badge idle">NO APPEARANCE</span>
           <span class="rp-title">J.R. Ritchie</span>
         </div>
         <div class="rp-live-body" style="padding:10px 14px;color:var(--sub);font-size:12px">
@@ -941,8 +936,7 @@ function rpOffDay() {
       <div class="rp-board">
         <div class="rp-board-bar idle"></div>
         <div class="rp-head">
-          ${photoImg()}
-          <span class="rp-badge idle">OFF DAY</span>
+<span class="rp-badge idle">OFF DAY</span>
           <span class="rp-title">J.R. Ritchie</span>
         </div>
         <div class="rp-live-body" style="padding:10px 14px;color:var(--sub);font-size:12px">
