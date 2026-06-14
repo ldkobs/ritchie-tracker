@@ -1070,6 +1070,15 @@ async function runPoll() {
       ${soxCardHtml(soxGame, liveFeed)}
     ` : ''}
     ${otherGamesHtml(otherGames)}
+    <div class="sec-head"><span class="sec-lbl">Get Notified</span><div class="sec-line"></div></div>
+    <div style="padding:0 14px 14px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+        <p style="font-size:12px;color:var(--sub);padding:10px 14px 0;margin:0">Get an email every time Ritchie takes the mound.</p>
+        <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSdJAiRpEzZpFro4BcxZ5ErvSzy9evWotfjd4vWRsaboX_fT8w/viewform?embedded=true"
+          width="100%" height="420" frameborder="0" marginheight="0" marginwidth="0"
+          style="display:block">Loading…</iframe>
+      </div>
+    </div>
     ${refreshRow()}`;
 
   startCountdown();
