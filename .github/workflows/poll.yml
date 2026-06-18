@@ -13,6 +13,10 @@ on:
         description: 'Simulate a full outing (entry → at-bat → done)'
         type: boolean
         default: false
+      test_date:
+        description: 'Run against a past date (YYYY-MM-DD) with real game data'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -36,6 +40,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           TEST_MODE: ${{ inputs.test }}
           TEST_GAME: ${{ inputs.test_game }}
+          DATE_OVERRIDE: ${{ inputs.test_date }}
         run: python poller/check_ritchie.py
 
       - name: Save state

@@ -21,6 +21,10 @@ def mlb(path, **params):
         return None
 
 def today():
+    # Manual override for testing against a specific past date
+    ov = os.environ.get('DATE_OVERRIDE', '').strip()
+    if ov:
+        return ov
     # Use Eastern time (UTC-4 EDT) so date matches MLB schedule
     et = datetime.now(timezone.utc) - timedelta(hours=4)
     return et.strftime('%Y-%m-%d')
@@ -266,6 +270,14 @@ def main():
 
     state = load_state()
     log(f'Loaded state: {state}')
+
+    # Date-override test mode: single poll against a past date, don't persist state
+    if os.environ.get('DATE_OVERRIDE', '').strip():
+        log('DATE_OVERRIDE set — single poll, state will NOT be saved.')
+        poll_once(state, wh)
+        log(f'Done (override run). State: {state}')
+        return
+
     start     = time.time()
     iteration = 0
 
