@@ -21,7 +21,10 @@ def mlb(path, **params):
         return None
 
 def today():
-    return datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    from datetime import timedelta
+    # Use Eastern time (UTC-4 EDT / UTC-5 EST) so date matches MLB schedule
+    et = datetime.now(timezone.utc) - timedelta(hours=4)
+    return et.strftime('%Y-%m-%d')
 
 def game_state(g):
     c   = g.get('status', {}).get('codedGameState', '')
