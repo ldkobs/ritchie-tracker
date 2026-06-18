@@ -1082,24 +1082,34 @@ async function runPoll() {
   const soxGames   = games.filter(isHisTeamGame);
   const otherGames = games.filter(g => !isHisTeamGame(g));
 
-  // For doubleheaders: prefer the live game, then the most recent final, then first pre
-  const soxGame = soxGames.find(g => gameState(g) === 'live')
-               || soxGames.find(g => gameState(g) === 'final')
-               || soxGames[0]
-               || null;
-  const soxState = soxGame ? gameState(soxGame) : 'none';
+  // Fetch feeds for ALL live/final Braves games in parallel (handles doubleheaders)
+  const feedMap = {}; // gamePk → liveFeed
+  await Promise.all(soxGames
+    .filter(g => ['live','final'].includes(gameState(g)))
+    .map(async g => { feedMap[g.gamePk] = await fetchLiveFeed(g.gamePk); })
+  );
 
-  // Fetch live feed for live OR final games (to catch Ritchie's completed outings)
-  let liveFeed = null;
-  if (soxGame && (soxState === 'live' || soxState === 'final')) {
-    liveFeed = await fetchLiveFeed(soxGame.gamePk);
-  }
+  // Find the game where Ritchie is/was pitching (live first, then by appearance)
+  const myId = String(pid);
+  const liveGame  = soxGames.find(g => gameState(g) === 'live');
+  const ritchieGame = soxGames.find(g => {
+    const feed = feedMap[g.gamePk];
+    if (!feed) return false;
+    const ls = feed.liveData?.linescore;
+    if (String(ls?.defense?.pitcher?.id||'') === myId) return true;
+    const plays = feed.liveData?.plays?.allPlays || [];
+    if (plays.some(p => String(p.matchup?.pitcher?.id||'') === myId)) return true;
+    return !!outingFromBoxscore(feed, pid);
+  }) || liveGame || soxGames[0] || null;
+
+  const soxGame  = ritchieGame;
+  const soxState = soxGame ? gameState(soxGame) : 'none';
+  const liveFeed = soxGame ? feedMap[soxGame.gamePk] || null : null;
 
   // Ritchie state
   let ritchieHtml = '';
   if (liveFeed && pid) {
     const ls       = liveFeed.liveData?.linescore;
-    const myId     = String(pid);
     const isCur    = String(ls?.defense?.pitcher?.id||'') === myId;
     const allPlays = liveFeed.liveData?.plays?.allPlays||[];
     const curPlay  = liveFeed.liveData?.plays?.currentPlay;
@@ -1139,7 +1149,7 @@ async function runPoll() {
   // All Braves games (shows both cards in a doubleheader)
   const soxCardsHtml = soxGames.length ? `
     <div class="sec-head"><span class="sec-lbl">${S.teamAbbr||'Team'}</span><div class="sec-line"></div></div>
-    ${soxGames.map(g => soxCardHtml(g, g === soxGame ? liveFeed : null)).join('')}
+    ${soxGames.map(g => soxCardHtml(g, feedMap[g.gamePk] || null)).join('')}
   ` : '';
 
   // Compose full page
