@@ -1079,11 +1079,17 @@ async function runPoll() {
     pid ? fetchNextStart(pid) : Promise.resolve(null)
   ]);
 
-  const soxGame = games.find(isHisTeamGame);
+  const soxGames   = games.filter(isHisTeamGame);
   const otherGames = games.filter(g => !isHisTeamGame(g));
-  const soxState   = soxGame ? gameState(soxGame) : 'none';
 
-  // Fetch live feed for live OR final Sox games (to catch Ritchie's completed outings)
+  // For doubleheaders: prefer the live game, then the most recent final, then first pre
+  const soxGame = soxGames.find(g => gameState(g) === 'live')
+               || soxGames.find(g => gameState(g) === 'final')
+               || soxGames[0]
+               || null;
+  const soxState = soxGame ? gameState(soxGame) : 'none';
+
+  // Fetch live feed for live OR final games (to catch Ritchie's completed outings)
   let liveFeed = null;
   if (soxGame && (soxState === 'live' || soxState === 'final')) {
     liveFeed = await fetchLiveFeed(soxGame.gamePk);
@@ -1113,8 +1119,8 @@ async function runPoll() {
     if(!isCur&&S.isPitching&&myDone.length)await sendSlack(slackFinished(outing,soxGame));
     S.lastABIdx=isCur?curIdx:S.lastABIdx; S.isPitching=isCur;
 
-    if(isCur)                 ritchieHtml = rpLive(curPlay,outing,myDone,count,inn);
-    else if(myPlays.length)   ritchieHtml = rpDone(outing,myDone,inn);
+    if(isCur)                  ritchieHtml = rpLive(curPlay,outing,myDone,count,inn);
+    else if(myPlays.length)    ritchieHtml = rpDone(outing,myDone,inn);
     else if(soxState==='live') ritchieHtml = rpWatching(soxGame);
     else {
       const bsOuting = outingFromBoxscore(liveFeed, pid);
@@ -1130,16 +1136,19 @@ async function runPoll() {
     S.isPitching=false; ritchieHtml = rpOffDay();
   }
 
+  // All Braves games (shows both cards in a doubleheader)
+  const soxCardsHtml = soxGames.length ? `
+    <div class="sec-head"><span class="sec-lbl">${S.teamAbbr||'Team'}</span><div class="sec-line"></div></div>
+    ${soxGames.map(g => soxCardHtml(g, g === soxGame ? liveFeed : null)).join('')}
+  ` : '';
+
   // Compose full page
   $('main').innerHTML = `
     ${deployNotice()}
     ${webhookNotice()}
     <div class="sec-head"><span class="sec-lbl">Pitcher</span><div class="sec-line"></div></div>
     ${ritchieHtml}
-    ${soxGame ? `
-      <div class="sec-head"><span class="sec-lbl">${S.teamAbbr||'Team'}</span><div class="sec-line"></div></div>
-      ${soxCardHtml(soxGame, liveFeed)}
-    ` : ''}
+    ${soxCardsHtml}
     ${otherGamesHtml(otherGames)}
     <div style="padding:0 14px 4px">
       <div class="sec-head"><span class="sec-lbl">Get Notified</span><div class="sec-line"></div></div>
