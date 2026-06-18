@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 import os, json, time, sys, requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-PLAYER_ID     = 702275   # JR Ritchie
-TEAM_ID       = '144'    # Atlanta Braves
-STATE_FILE    = 'poller/state.json'
-MLB           = 'https://statsapi.mlb.com/api/v1'
-POLL_INTERVAL = 30       # seconds between checks
-LOOP_DURATION = 270      # run for 4.5 min so 5-min cron jobs don't overlap
+PLAYER_ID      = 702275   # JR Ritchie
+TEAM_ID        = '144'    # Atlanta Braves
+STATE_FILE     = 'poller/state.json'
+MLB            = 'https://statsapi.mlb.com/api/v1'
+POLL_INTERVAL  = 30       # seconds between checks
+LOOP_DURATION  = 270      # run for 4.5 min so 5-min cron jobs don't overlap
+REPORT_EVERY   = 900      # 15-minute status reports (seconds)
 
 def log(msg):
     print(msg, flush=True)
@@ -21,10 +22,12 @@ def mlb(path, **params):
         return None
 
 def today():
-    from datetime import timedelta
-    # Use Eastern time (UTC-4 EDT / UTC-5 EST) so date matches MLB schedule
+    # Use Eastern time (UTC-4 EDT) so date matches MLB schedule
     et = datetime.now(timezone.utc) - timedelta(hours=4)
     return et.strftime('%Y-%m-%d')
+
+def now_ts():
+    return int(time.time())
 
 def game_state(g):
     c   = g.get('status', {}).get('codedGameState', '')
@@ -74,22 +77,22 @@ def msg_entry(game, inn):
             {'type': 'mrkdwn', 'text': f"*Inning*\n{inn}"},
             {'type': 'mrkdwn', 'text': f"*Score*\n{a['score']}–{h['score']}"}
         ]},
-        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': "You'll get a message after each at-bat.  🔴 K · 🔵 BB · 🟡 Hit · ⚫ Out"}]}
+        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': "You'll get a status update every 15 min while he's on the mound."}]}
     ]}
 
-def msg_ab(play, outing, inn):
-    evt  = (play.get('result', {}).get('eventType') or '').lower()
-    name = play.get('result', {}).get('event') or 'Out'
-    em   = '🔴' if 'strikeout' in evt else '🔵' if evt in ('walk', 'intent_walk') else '💣' if evt == 'home_run' else '🟡' if evt in ('single', 'double', 'triple') else '⚫'
-    bat  = (play.get('matchup', {}).get('batter', {}).get('fullName') or '?')
-    return {'text': f'{em} {name} — {bat} | {outing["ip"]} IP · {outing["k"]}K · {outing["r"]}R', 'blocks': [
-        {'type': 'header', 'text': {'type': 'plain_text', 'text': f'{em}  {name}', 'emoji': True}},
+def msg_report(outing, game, inn):
+    a, h = game['teams']['away'], game['teams']['home']
+    perf = '🟢' if outing['r'] == 0 else '🟡' if outing['r'] <= 1 else '🔴'
+    return {'text': f"📊 Ritchie update — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': [
+        {'type': 'header', 'text': {'type': 'plain_text', 'text': '📊  Ritchie — 15-Min Update', 'emoji': True}},
         {'type': 'section', 'fields': [
-            {'type': 'mrkdwn', 'text': f"*Batter*\n{bat}"},
+            {'type': 'mrkdwn', 'text': f"*Outing Line*\n{ol(outing)}"},
             {'type': 'mrkdwn', 'text': f"*Inning*\n{inn}"}
         ]},
-        {'type': 'divider'},
-        {'type': 'section', 'text': {'type': 'mrkdwn', 'text': f"*Outing Line*\n{ol(outing)}"}}
+        {'type': 'section', 'fields': [
+            {'type': 'mrkdwn', 'text': f"*Score*\n{a['team']['name']} {a['score']} – {h['score']} {h['team']['name']}"},
+            {'type': 'mrkdwn', 'text': f"*Status*\n{perf} Still on the mound"}
+        ]}
     ]}
 
 def msg_done(outing, game):
@@ -110,7 +113,8 @@ def load_state():
             raise ValueError('new day')
         return s
     except Exception:
-        return {'date': today(), 'is_pitching': False, 'last_ab_idx': -1, 'entry_sent': False}
+        return {'date': today(), 'is_pitching': False, 'last_ab_idx': -1,
+                'entry_sent': False, 'last_report_ts': 0}
 
 def save_state(s):
     with open(STATE_FILE, 'w') as f:
@@ -125,17 +129,16 @@ def poll_once(state, wh):
     games = dates[0].get('games', [])
     log(f'Found {len(games)} game(s) on {today()}')
 
-    game  = next((g for g in games
-                  if TEAM_ID in (str(g['teams']['home']['team']['id']),
-                                  str(g['teams']['away']['team']['id']))), None)
+    game = next((g for g in games
+                 if TEAM_ID in (str(g['teams']['home']['team']['id']),
+                                str(g['teams']['away']['team']['id']))), None)
 
     if not game:
-        team_ids = [(str(g['teams']['home']['team']['id']), str(g['teams']['away']['team']['id'])) for g in games]
-        log(f'No Braves game found. Team IDs in schedule: {team_ids}')
+        log(f'No Braves game found.')
         return
 
-    gs = game_state(game)
-    coded = game.get('status', {}).get('codedGameState', '?')
+    gs     = game_state(game)
+    coded  = game.get('status', {}).get('codedGameState', '?')
     detail = game.get('status', {}).get('detailedState', '?')
     log(f'Braves game found — state={gs} coded={coded} detail={detail}')
 
@@ -166,24 +169,29 @@ def poll_once(state, wh):
     inn      = inn_txt(ls)
     cur_idx  = (cur_play or {}).get('atBatIndex', -1)
 
-    log(f'is_cur={is_cur} inn={inn} my_plays={len(my_plays)} my_done={len(my_done)} entry_sent={state["entry_sent"]}')
+    log(f'is_cur={is_cur} inn={inn} my_plays={len(my_plays)} entry_sent={state["entry_sent"]}')
 
+    # Entry notification
     if is_cur and not state['entry_sent']:
         post_slack(wh, msg_entry(game, inn))
-        state['entry_sent'] = True
-        state['is_pitching'] = True
+        state['entry_sent']     = True
+        state['is_pitching']    = True
+        state['last_report_ts'] = now_ts()
         log(f'Entry sent — {inn}')
 
-    if is_cur and state['last_ab_idx'] >= 0 and cur_idx != state['last_ab_idx']:
-        prev = next((p for p in all_plays if p.get('atBatIndex') == state['last_ab_idx']), None)
-        if prev and prev.get('result', {}).get('eventType'):
-            post_slack(wh, msg_ab(prev, outing, inn))
-            log(f"AB sent — {prev.get('result',{}).get('event')} by {prev.get('matchup',{}).get('batter',{}).get('fullName','?')}")
+    # 15-minute status report while he's on the mound
+    if is_cur and state['entry_sent']:
+        elapsed_since_report = now_ts() - state.get('last_report_ts', 0)
+        if elapsed_since_report >= REPORT_EVERY:
+            post_slack(wh, msg_report(outing, game, inn))
+            state['last_report_ts'] = now_ts()
+            log(f'15-min report sent — {inn}')
 
     if is_cur:
-        state['last_ab_idx'] = cur_idx
-        state['is_pitching'] = True
+        state['last_ab_idx']  = cur_idx
+        state['is_pitching']  = True
 
+    # Outing complete
     if not is_cur and state['is_pitching'] and my_done:
         post_slack(wh, msg_done(outing, game))
         state['is_pitching'] = False
@@ -193,15 +201,15 @@ def poll_once(state, wh):
 
 def main():
     wh = os.environ.get('SLACK_WEBHOOK_URL', '')
-    log(f'Poller starting — UTC date: {today()}, player_id: {PLAYER_ID}, team_id: {TEAM_ID}')
+    log(f'Poller starting — ET date: {today()}, player_id: {PLAYER_ID}, team_id: {TEAM_ID}')
 
     if os.environ.get('TEST_MODE', '').lower() == 'true':
         post_slack(wh, {
             'text': '✅ Ritchie Tracker is connected!',
             'blocks': [
                 {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Ritchie Tracker — Test Successful', 'emoji': True}},
-                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll be notified automatically whenever J.R. Ritchie enters a game.'}},
-                {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 30 sec · noon–midnight ET · ldkobs/ritchie-tracker'}]}
+                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll get notified when Ritchie enters a game, with a status update every 15 minutes while he\'s on the mound.'}},
+                {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 30 sec · ldkobs/ritchie-tracker'}]}
             ]
         })
         log('Test message sent.')
@@ -210,26 +218,16 @@ def main():
     if os.environ.get('TEST_GAME', '').lower() == 'true':
         fake_game = {'teams': {'away': {'team': {'name': 'Milwaukee Brewers'}, 'score': 2},
                                'home': {'team': {'name': 'Atlanta Braves'},    'score': 3}}}
-        fake_plays = [
-            {'result': {'eventType': 'strikeout',   'event': 'Strikeout'},   'matchup': {'batter': {'fullName': 'C. Yelich'}}},
-            {'result': {'eventType': 'single',      'event': 'Single'},      'matchup': {'batter': {'fullName': 'W. Contreras'}}},
-            {'result': {'eventType': 'intent_walk', 'event': 'Intent Walk'}, 'matchup': {'batter': {'fullName': 'S. Wiemer'}}},
-        ]
-        outings = [
-            dict(ip='0.1', k=1, bb=0, h=0, r=0),
-            dict(ip='0.2', k=1, bb=0, h=1, r=0),
-            dict(ip='0.2', k=1, bb=1, h=1, r=0),
-        ]
-        final_outing = dict(ip='1.0', k=2, bb=1, h=1, r=0)
+        fake_outing_mid  = dict(ip='0.2', k=1, bb=0, h=1, r=0)
+        final_outing     = dict(ip='1.0', k=2, bb=1, h=1, r=0)
 
         log('Sending entry…')
         post_slack(wh, msg_entry(fake_game, '▼7'))
         time.sleep(8)
 
-        for play, outing in zip(fake_plays, outings):
-            log(f"Sending AB: {play['result']['event']}…")
-            post_slack(wh, msg_ab(play, outing, '▼7'))
-            time.sleep(8)
+        log('Sending 15-min report…')
+        post_slack(wh, msg_report(fake_outing_mid, fake_game, '▼7'))
+        time.sleep(8)
 
         log('Sending outing complete…')
         post_slack(wh, msg_done(final_outing, fake_game))
@@ -237,8 +235,10 @@ def main():
         return
 
     state = load_state()
+    # Ensure last_report_ts exists in older state files
+    state.setdefault('last_report_ts', 0)
     log(f'Loaded state: {state}')
-    start = time.time()
+    start     = time.time()
     iteration = 0
 
     while True:
