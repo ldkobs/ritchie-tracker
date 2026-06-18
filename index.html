@@ -653,6 +653,26 @@ function slackFinished(outing, game) {
   ]};
 }
 
+/* ── Boxscore fallback ─────────────────────────────────────────────── */
+function outingFromBoxscore(liveFeed, pid) {
+  const myId = String(pid);
+  const bs = liveFeed?.liveData?.boxscore?.teams;
+  for (const side of ['away', 'home']) {
+    const pitchers = bs?.[side]?.pitchers || [];
+    if (pitchers.map(String).includes(myId)) {
+      const p = bs[side].players?.['ID' + myId]?.stats?.pitching || {};
+      return {
+        ip: p.inningsPitched || '0',
+        k:  p.strikeOuts     || 0,
+        bb: p.baseOnBalls    || 0,
+        h:  p.hits           || 0,
+        r:  p.earnedRuns     || 0,
+      };
+    }
+  }
+  return null;
+}
+
 /* ── Stats helpers ─────────────────────────────────────────────────── */
 function calcOuting(plays) {
   let k=0,bb=0,h=0,r=0,outs=0;
@@ -762,7 +782,7 @@ function fmtGameTime(dateStr) {
   return new Date(dateStr).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 }
 function isHisTeamGame(g) {
-  const tid = S.teamId || '111';
+  const tid = S.teamId || '144';
   return String(g.teams?.home?.team?.id)===tid||String(g.teams?.away?.team?.id)===tid;
 }
 
@@ -1096,7 +1116,10 @@ async function runPoll() {
     if(isCur)                 ritchieHtml = rpLive(curPlay,outing,myDone,count,inn);
     else if(myPlays.length)   ritchieHtml = rpDone(outing,myDone,inn);
     else if(soxState==='live') ritchieHtml = rpWatching(soxGame);
-    else                      ritchieHtml = rpNoAppearance();
+    else {
+      const bsOuting = outingFromBoxscore(liveFeed, pid);
+      ritchieHtml = bsOuting ? rpDone(bsOuting, [], inn) : rpNoAppearance();
+    }
   } else if (soxState==='live') {
     S.isPitching=false; ritchieHtml = rpWatching(soxGame);
   } else if (nextStart) {
