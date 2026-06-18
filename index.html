@@ -486,10 +486,10 @@
   </div>
   <div class="toggle-row">
     <div class="toggle-text">
-      <div class="toggle-name">Notify each at-bat</div>
-      <div class="toggle-desc">Result + outing line after every AB</div>
+      <div class="toggle-name">Notify at game end</div>
+      <div class="toggle-desc">His full final line when the game finishes</div>
     </div>
-    <label class="tog"><input type="checkbox" id="tog-ab" checked>
+    <label class="tog"><input type="checkbox" id="tog-done" checked>
       <div class="tog-track"></div><div class="tog-thumb"></div></label>
   </div>
   <button class="save-btn" onclick="saveSettings()">Save</button>
@@ -500,10 +500,10 @@
 const CFG = {
   get webhook()     { return localStorage.getItem('rt_webhook') || ''; },
   get notifyEntry() { return localStorage.getItem('rt_entry') !== 'false'; },
-  get notifyAB()    { return localStorage.getItem('rt_ab')    !== 'false'; },
+  get notifyDone()  { return localStorage.getItem('rt_done')  !== 'false'; },
 };
 
-const S = { pid: 702275, teamId: '144', teamAbbr: 'ATL', teamName: 'Atlanta Braves', isPitching: false, lastABIdx: -1, cdVal: 30, cdTimer: null };
+const S = { pid: 702275, teamId: '144', teamAbbr: 'ATL', teamName: 'Atlanta Braves', isPitching: false, lastABIdx: -1, doneSent: false, cdVal: 30, cdTimer: null };
 
 /* ── API helpers ───────────────────────────────────────────────────── */
 function mlb(path, params = {}) {
@@ -616,7 +616,7 @@ function slackEntry(game, inn) {
       { type:'mrkdwn', text:`*Score*\n${a?.score??0}–${h?.score??0}` }
     ]},
     { type:'divider' },
-    { type:'context', elements:[{ type:'mrkdwn', text:'You\'ll get a message after each at-bat.  🔴 K · 🔵 BB · 🟡 Hit · ⚫ Out' }]}
+    { type:'context', elements:[{ type:'mrkdwn', text:'You\'ll get his full line when the game ends.' }]}
   ]};
 }
 function slackAtBat(play, outing, inn) {
@@ -637,19 +637,20 @@ function slackAtBat(play, outing, inn) {
     { type:'section', text:{ type:'mrkdwn', text:`*Outing Line*\n${ol(outing)}` }}
   ]};
 }
-function slackFinished(outing, game) {
+function slackFinished(outing, game, innings) {
   const h = game.teams?.home, a = game.teams?.away;
   const ip = parseFloat(outing.ip) || 0;
   const perf = outing.r === 0 ? '🟢 Clean outing' : outing.r <= 1 ? '🟡 Solid outing' : '🔴 Rough outing';
-  return { text:`✅ Ritchie done — ${outing.ip} IP · ${outing.k}K · ${outing.r}R`, blocks:[
-    { type:'header', text:{ type:'plain_text', text:'✅  Outing Complete — J.R. Ritchie', emoji:true }},
-    { type:'section', text:{ type:'mrkdwn', text:`${perf}\n${ol(outing)}` }},
-    { type:'section', fields:[
-      { type:'mrkdwn', text:`*K/IP*\n${ip?(outing.k/ip).toFixed(1):'—'}` },
-      { type:'mrkdwn', text:`*WHIP*\n${ip?((outing.bb+outing.h)/ip).toFixed(2):'—'}` }
-    ]},
+  const fields = [{ type:'mrkdwn', text:`*Final Line*\n${ol(outing)}` }];
+  if (innings) fields.push({ type:'mrkdwn', text:`*Innings Pitched*\n${innings}` });
+  fields.push({ type:'mrkdwn', text:`*K/IP*\n${ip?(outing.k/ip).toFixed(1):'—'}` });
+  fields.push({ type:'mrkdwn', text:`*WHIP*\n${ip?((outing.bb+outing.h)/ip).toFixed(2):'—'}` });
+  return { text:`✅ Ritchie's final — ${outing.ip} IP · ${outing.k}K · ${outing.r}R`, blocks:[
+    { type:'header', text:{ type:'plain_text', text:'✅  Game Over — J.R. Ritchie', emoji:true }},
+    { type:'section', text:{ type:'mrkdwn', text:`${perf}` }},
+    { type:'section', fields },
     { type:'divider' },
-    { type:'context', elements:[{ type:'mrkdwn', text:`${a?.team?.name||'Away'} @ ${h?.team?.name||'Home'} · Score: ${a?.score??0}–${h?.score??0}` }]}
+    { type:'context', elements:[{ type:'mrkdwn', text:`${a?.team?.name||'Away'} ${a?.score??0} – ${h?.score??0} ${h?.team?.name||'Home'} · Final` }]}
   ]};
 }
 
@@ -693,6 +694,12 @@ function abResult(p) {
   if(e==='walk'||e==='intent_walk')return{code:'BB',cls:'W'};
   if(['single','double','triple','home_run'].includes(e))return{code:p.result?.event?.charAt(0)||'H',cls:'H'};
   return{code:'O',cls:'O'};
+}
+function ordinal(n){const v=n%100;if(v>=11&&v<=13)return n+'th';return n+({1:'st',2:'nd',3:'rd'}[n%10]||'th');}
+function inningsPitchedLabel(plays){
+  const innings=[...new Set((plays||[]).map(p=>p.about?.inning).filter(Boolean))].sort((a,b)=>a-b);
+  if(!innings.length)return'';
+  return innings.length===1?ordinal(innings[0]):`${ordinal(innings[0])}–${ordinal(innings[innings.length-1])}`;
 }
 
 /* ── HTML builders ─────────────────────────────────────────────────── */
@@ -844,6 +851,7 @@ function rpDone(outing, myDone, inn) {
   setLiveDot(false);
   setHdrSub(`Done · ${outing.ip} IP  ${outing.k}K  ${outing.r}R`);
   const ip = parseFloat(outing.ip)||0;
+  const innings = inningsPitchedLabel(myDone);
   const perf = outing.r===0?['🟢 Clean','clean']:outing.r<=1?['🟡 Solid','solid']:['🔴 Rough','rough'];
   return `
     <div class="rp-wrap">
@@ -852,7 +860,7 @@ function rpDone(outing, myDone, inn) {
         <div class="rp-head">
 <span class="rp-badge done">✓ DONE</span>
           <span class="rp-title">J.R. Ritchie</span>
-          <span class="rp-meta">${inn}</span>
+          <span class="rp-meta">${innings?`Pitched ${innings}`:inn}</span>
         </div>
         <div class="rp-live-body">
           <div class="rp-perf-row">
@@ -1120,14 +1128,16 @@ async function runPoll() {
     const inn      = `${ls?.inningHalf||''} ${ls?.currentInning||''}`;
     const count    = curPlay?.count||{balls:0,strikes:0,outs:0};
 
-    // Slack
+    // Slack — entry + final line at game end (mirrors the cloud poller)
     if(isCur&&!S.isPitching&&CFG.notifyEntry) await sendSlack(slackEntry(soxGame,inn));
-    if(isCur&&curIdx!==S.lastABIdx&&S.lastABIdx>=0&&CFG.notifyAB){
-      const fin=allPlays.find(p=>p.atBatIndex===S.lastABIdx);
-      if(fin?.result?.eventType)await sendSlack(slackAtBat(fin,outing,inn));
+    if(soxState==='final'&&!S.doneSent&&CFG.notifyDone){
+      const bs=outingFromBoxscore(liveFeed,pid);
+      if(bs||myDone.length){
+        await sendSlack(slackFinished(bs||outing, soxGame, inningsPitchedLabel(myDone)));
+        S.doneSent=true;
+      }
     }
-    if(!isCur&&S.isPitching&&myDone.length)await sendSlack(slackFinished(outing,soxGame));
-    S.lastABIdx=isCur?curIdx:S.lastABIdx; S.isPitching=isCur;
+    S.isPitching=isCur;
 
     if(isCur)                  ritchieHtml = rpLive(curPlay,outing,myDone,count,inn);
     else if(myPlays.length)    ritchieHtml = rpDone(outing,myDone,inn);
@@ -1179,7 +1189,7 @@ async function runPoll() {
 function openSettings(){
   $('wh-input').value=CFG.webhook;
   $('tog-entry').checked=CFG.notifyEntry;
-  $('tog-ab').checked=CFG.notifyAB;
+  $('tog-done').checked=CFG.notifyDone;
   $('sheet').classList.add('open');$('overlay').classList.add('open');
 }
 function closeSettings(){$('sheet').classList.remove('open');$('overlay').classList.remove('open');}
@@ -1188,7 +1198,7 @@ function saveSettings(){
   if(wh && wh !== CFG.webhook) window._ga('webhook_connected');
   localStorage.setItem('rt_webhook', wh);
   localStorage.setItem('rt_entry',$('tog-entry').checked);
-  localStorage.setItem('rt_ab',$('tog-ab').checked);
+  localStorage.setItem('rt_done',$('tog-done').checked);
   closeSettings();
 }
 

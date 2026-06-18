@@ -8,7 +8,6 @@ STATE_FILE     = 'poller/state.json'
 MLB            = 'https://statsapi.mlb.com/api/v1'
 POLL_INTERVAL  = 30       # seconds between checks
 LOOP_DURATION  = 270      # run for 4.5 min so 5-min cron jobs don't overlap
-REPORT_EVERY   = 900      # 15-minute status reports (seconds)
 
 def log(msg):
     print(msg, flush=True)
@@ -26,9 +25,6 @@ def today():
     et = datetime.now(timezone.utc) - timedelta(hours=4)
     return et.strftime('%Y-%m-%d')
 
-def now_ts():
-    return int(time.time())
-
 def game_state(g):
     c   = g.get('status', {}).get('codedGameState', '')
     det = g.get('status', {}).get('detailedState', '').lower()
@@ -42,18 +38,41 @@ def inn_txt(ls):
     half = '▲' if ls.get('inningHalf') == 'Top' else '▼'
     return f"{half}{ls.get('currentInning', '?')}"
 
-def calc_outing(plays):
-    k = bb = h = r = outs = 0
-    for p in plays:
-        e = (p.get('result', {}).get('eventType') or '').lower()
-        if 'strikeout' in e: k += 1
-        elif e in ('walk', 'intent_walk'): bb += 1
-        elif e in ('single', 'double', 'triple', 'home_run'): h += 1
-        if p.get('result', {}).get('isOut'):
-            outs += 2 if 'double_play' in e else 3 if 'triple_play' in e else 1
-        r += int(p.get('result', {}).get('rbi') or 0)
-    f, pt = divmod(outs, 3)
-    return dict(ip=f'{f}.{pt}' if pt else str(f), k=k, bb=bb, h=h, r=r)
+def ordinal(n):
+    if 10 <= n % 100 <= 20:
+        suf = 'th'
+    else:
+        suf = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f'{n}{suf}'
+
+def innings_pitched_label(plays, pid):
+    my_id = str(pid)
+    innings = sorted({p.get('about', {}).get('inning')
+                      for p in plays
+                      if str(p.get('matchup', {}).get('pitcher', {}).get('id', '')) == my_id
+                      and p.get('about', {}).get('inning')})
+    if not innings:
+        return ''
+    if len(innings) == 1:
+        return ordinal(innings[0])
+    return f'{ordinal(innings[0])}–{ordinal(innings[-1])}'
+
+def outing_from_boxscore(feed, pid):
+    """Authoritative final line straight from the boxscore — matches the website."""
+    my_id = str(pid)
+    teams = feed.get('liveData', {}).get('boxscore', {}).get('teams', {})
+    for side in ('away', 'home'):
+        pitchers = [str(x) for x in teams.get(side, {}).get('pitchers', [])]
+        if my_id in pitchers:
+            p = teams[side].get('players', {}).get('ID' + my_id, {}).get('stats', {}).get('pitching', {})
+            return dict(
+                ip = p.get('inningsPitched', '0'),
+                k  = p.get('strikeOuts', 0),
+                bb = p.get('baseOnBalls', 0),
+                h  = p.get('hits', 0),
+                r  = p.get('earnedRuns', 0),
+            )
+    return None
 
 def ol(o):
     return f"`{o['ip']} IP · {o['k']}K · {o['bb']}BB · {o['h']}H · {o['r']}R`"
@@ -77,32 +96,24 @@ def msg_entry(game, inn):
             {'type': 'mrkdwn', 'text': f"*Inning*\n{inn}"},
             {'type': 'mrkdwn', 'text': f"*Score*\n{a['score']}–{h['score']}"}
         ]},
-        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': "You'll get a status update every 15 min while he's on the mound."}]}
+        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': "You'll get his full line when the game ends."}]}
     ]}
 
-def msg_report(outing, game, inn):
-    a, h = game['teams']['away'], game['teams']['home']
-    perf = '🟢' if outing['r'] == 0 else '🟡' if outing['r'] <= 1 else '🔴'
-    return {'text': f"📊 Ritchie update — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': [
-        {'type': 'header', 'text': {'type': 'plain_text', 'text': '📊  Ritchie — 15-Min Update', 'emoji': True}},
-        {'type': 'section', 'fields': [
-            {'type': 'mrkdwn', 'text': f"*Outing Line*\n{ol(outing)}"},
-            {'type': 'mrkdwn', 'text': f"*Inning*\n{inn}"}
-        ]},
-        {'type': 'section', 'fields': [
-            {'type': 'mrkdwn', 'text': f"*Score*\n{a['team']['name']} {a['score']} – {h['score']} {h['team']['name']}"},
-            {'type': 'mrkdwn', 'text': f"*Status*\n{perf} Still on the mound"}
-        ]}
-    ]}
-
-def msg_done(outing, game):
+def msg_done(outing, game, innings):
     a, h = game['teams']['away'], game['teams']['home']
     perf = '🟢 Clean' if outing['r'] == 0 else '🟡 Solid' if outing['r'] <= 1 else '🔴 Rough'
-    return {'text': f"✅ Ritchie done — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': [
-        {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Outing Complete — J.R. Ritchie', 'emoji': True}},
-        {'type': 'section', 'text': {'type': 'mrkdwn', 'text': f"{perf} outing\n{ol(outing)}"}},
-        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': f"{a['team']['name']} @ {h['team']['name']} · {a['score']}–{h['score']}"}]}
+    fields = [{'type': 'mrkdwn', 'text': f"*Final Line*\n{ol(outing)}"}]
+    if innings:
+        fields.append({'type': 'mrkdwn', 'text': f"*Innings Pitched*\n{innings}"})
+    return {'text': f"✅ Ritchie's final — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': [
+        {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Game Over — J.R. Ritchie', 'emoji': True}},
+        {'type': 'section', 'text': {'type': 'mrkdwn', 'text': f"{perf} outing"}},
+        {'type': 'section', 'fields': fields},
+        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': f"{a['team']['name']} {a['score']} – {h['score']} {h['team']['name']} · Final"}]}
     ]}
+
+def blank_game_state():
+    return {'entry_sent': False, 'done_sent': False, 'is_pitching': False}
 
 def load_state():
     try:
@@ -111,14 +122,23 @@ def load_state():
         if s.get('date') != today():
             log(f"New day ({today()}), resetting state.")
             raise ValueError('new day')
+        s.setdefault('games', {})
         return s
     except Exception:
-        return {'date': today(), 'is_pitching': False, 'last_ab_idx': -1,
-                'entry_sent': False, 'last_report_ts': 0}
+        return {'date': today(), 'games': {}}
 
 def save_state(s):
     with open(STATE_FILE, 'w') as f:
         json.dump(s, f)
+
+def fetch_feed(game_pk):
+    try:
+        return requests.get(
+            f'https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live',
+            timeout=15).json()
+    except Exception as e:
+        log(f'Feed error: {e}')
+        return None
 
 def poll_once(state, wh):
     d     = mlb('schedule', sportId=1, date=today(), hydrate='linescore,team')
@@ -127,75 +147,63 @@ def poll_once(state, wh):
         log(f'No games found for {today()} (empty dates)')
         return
     games = dates[0].get('games', [])
-    log(f'Found {len(games)} game(s) on {today()}')
 
-    game = next((g for g in games
-                 if TEAM_ID in (str(g['teams']['home']['team']['id']),
-                                str(g['teams']['away']['team']['id']))), None)
-
-    if not game:
-        log(f'No Braves game found.')
+    braves = [g for g in games
+              if TEAM_ID in (str(g['teams']['home']['team']['id']),
+                             str(g['teams']['away']['team']['id']))]
+    if not braves:
+        log('No Braves game today.')
         return
+    log(f'{len(braves)} Braves game(s) today.')
 
-    gs     = game_state(game)
-    coded  = game.get('status', {}).get('codedGameState', '?')
-    detail = game.get('status', {}).get('detailedState', '?')
-    log(f'Braves game found — state={gs} coded={coded} detail={detail}')
+    my_id = str(PLAYER_ID)
 
-    if gs not in ('live', 'final'):
-        return
+    for game in braves:
+        gs  = game_state(game)
+        pk  = str(game['gamePk'])
+        log(f'Game {pk} — state={gs}')
+        if gs not in ('live', 'final'):
+            continue
 
-    try:
-        feed = requests.get(
-            f'https://statsapi.mlb.com/api/v1.1/game/{game["gamePk"]}/feed/live',
-            timeout=15).json()
-    except Exception as e:
-        log(f'Feed error: {e}')
-        return
+        gst = state['games'].setdefault(pk, blank_game_state())
 
-    ls        = feed.get('liveData', {}).get('linescore', {})
-    all_plays = feed.get('liveData', {}).get('plays', {}).get('allPlays', [])
-    cur_play  = feed.get('liveData', {}).get('plays', {}).get('currentPlay')
+        # Already fully reported this game — skip the feed fetch
+        if gst['done_sent']:
+            continue
 
-    cur_pitcher_id = str(ls.get('defense', {}).get('pitcher', {}).get('id', ''))
-    cur_pitcher_nm = ls.get('defense', {}).get('pitcher', {}).get('fullName', '?')
-    log(f'Current pitcher: {cur_pitcher_nm} (id={cur_pitcher_id}), looking for id={PLAYER_ID}')
+        feed = fetch_feed(game['gamePk'])
+        if not feed:
+            continue
 
-    my_id    = str(PLAYER_ID)
-    is_cur   = cur_pitcher_id == my_id
-    my_plays = [p for p in all_plays if str(p.get('matchup', {}).get('pitcher', {}).get('id', '')) == my_id]
-    my_done  = [p for p in my_plays if p.get('result', {}).get('eventType')]
-    outing   = calc_outing(my_done)
-    inn      = inn_txt(ls)
-    cur_idx  = (cur_play or {}).get('atBatIndex', -1)
+        ls         = feed.get('liveData', {}).get('linescore', {})
+        all_plays  = feed.get('liveData', {}).get('plays', {}).get('allPlays', [])
+        cur_id     = str(ls.get('defense', {}).get('pitcher', {}).get('id', ''))
+        is_cur     = cur_id == my_id
+        inn        = inn_txt(ls)
+        bs_outing  = outing_from_boxscore(feed, PLAYER_ID)
+        appeared   = bs_outing is not None or any(
+            str(p.get('matchup', {}).get('pitcher', {}).get('id', '')) == my_id for p in all_plays)
 
-    log(f'is_cur={is_cur} inn={inn} my_plays={len(my_plays)} entry_sent={state["entry_sent"]}')
+        log(f'  is_cur={is_cur} appeared={appeared} entry_sent={gst["entry_sent"]} done_sent={gst["done_sent"]}')
 
-    # Entry notification
-    if is_cur and not state['entry_sent']:
-        post_slack(wh, msg_entry(game, inn))
-        state['entry_sent']     = True
-        state['is_pitching']    = True
-        state['last_report_ts'] = now_ts()
-        log(f'Entry sent — {inn}')
+        # Alert 1 — he comes in
+        if is_cur and not gst['entry_sent']:
+            post_slack(wh, msg_entry(game, inn))
+            gst['entry_sent']  = True
+            gst['is_pitching'] = True
+            log(f'  Entry sent — {inn}')
 
-    # 15-minute status report while he's on the mound
-    if is_cur and state['entry_sent']:
-        elapsed_since_report = now_ts() - state.get('last_report_ts', 0)
-        if elapsed_since_report >= REPORT_EVERY:
-            post_slack(wh, msg_report(outing, game, inn))
-            state['last_report_ts'] = now_ts()
-            log(f'15-min report sent — {inn}')
+        if is_cur:
+            gst['is_pitching'] = True
 
-    if is_cur:
-        state['last_ab_idx']  = cur_idx
-        state['is_pitching']  = True
-
-    # Outing complete
-    if not is_cur and state['is_pitching'] and my_done:
-        post_slack(wh, msg_done(outing, game))
-        state['is_pitching'] = False
-        log(f"Done sent — {outing['ip']} IP · {outing['k']}K · {outing['r']}R")
+        # Alert 2 — game over, send his final line from the boxscore
+        if gs == 'final' and appeared and not gst['done_sent']:
+            outing   = bs_outing or dict(ip='0', k=0, bb=0, h=0, r=0)
+            innings  = innings_pitched_label(all_plays, PLAYER_ID)
+            post_slack(wh, msg_done(outing, game, innings))
+            gst['done_sent']   = True
+            gst['is_pitching'] = False
+            log(f"  Done sent — {outing['ip']} IP · {outing['k']}K · {outing['r']}R ({innings})")
 
     state['date'] = today()
 
@@ -208,7 +216,7 @@ def main():
             'text': '✅ Ritchie Tracker is connected!',
             'blocks': [
                 {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Ritchie Tracker — Test Successful', 'emoji': True}},
-                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll get notified when Ritchie enters a game, with a status update every 15 minutes while he\'s on the mound.'}},
+                {'type': 'section', 'text': {'type': 'mrkdwn', 'text': 'GitHub Actions poller is running and your Slack webhook is connected.\n\nYou\'ll get an alert when Ritchie enters a game, and his full line when the game ends.'}},
                 {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 30 sec · ldkobs/ritchie-tracker'}]}
             ]
         })
@@ -216,27 +224,20 @@ def main():
         return
 
     if os.environ.get('TEST_GAME', '').lower() == 'true':
-        fake_game = {'teams': {'away': {'team': {'name': 'Milwaukee Brewers'}, 'score': 2},
-                               'home': {'team': {'name': 'Atlanta Braves'},    'score': 3}}}
-        fake_outing_mid  = dict(ip='0.2', k=1, bb=0, h=1, r=0)
-        final_outing     = dict(ip='1.0', k=2, bb=1, h=1, r=0)
+        fake_game = {'teams': {'away': {'team': {'name': 'San Francisco Giants'}, 'score': 7},
+                               'home': {'team': {'name': 'Atlanta Braves'},      'score': 5}}}
+        final_outing = dict(ip='1.1', k=2, bb=1, h=1, r=0)
 
         log('Sending entry…')
-        post_slack(wh, msg_entry(fake_game, '▼7'))
+        post_slack(wh, msg_entry(fake_game, '▼8'))
         time.sleep(8)
 
-        log('Sending 15-min report…')
-        post_slack(wh, msg_report(fake_outing_mid, fake_game, '▼7'))
-        time.sleep(8)
-
-        log('Sending outing complete…')
-        post_slack(wh, msg_done(final_outing, fake_game))
+        log('Sending game-over final line…')
+        post_slack(wh, msg_done(final_outing, fake_game, '8th–9th'))
         log('Simulation done.')
         return
 
     state = load_state()
-    # Ensure last_report_ts exists in older state files
-    state.setdefault('last_report_ts', 0)
     log(f'Loaded state: {state}')
     start     = time.time()
     iteration = 0
