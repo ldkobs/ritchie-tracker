@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, json, time, requests
+import os, json, time, sys, requests
 from datetime import datetime, timezone
 
 PLAYER_ID     = 702275   # JR Ritchie
@@ -9,11 +9,15 @@ MLB           = 'https://statsapi.mlb.com/api/v1'
 POLL_INTERVAL = 30       # seconds between checks
 LOOP_DURATION = 270      # run for 4.5 min so 5-min cron jobs don't overlap
 
+def log(msg):
+    print(msg, flush=True)
+
 def mlb(path, **params):
     try:
         r = requests.get(f'{MLB}/{path}', params=params, timeout=10)
         return r.json() if r.ok else None
-    except Exception:
+    except Exception as e:
+        log(f'MLB API error: {e}')
         return None
 
 def today():
@@ -50,11 +54,13 @@ def ol(o):
 
 def post_slack(wh, payload):
     if not wh:
+        log('No Slack webhook set.')
         return
     try:
-        requests.post(wh, json=payload, timeout=10)
-    except Exception:
-        pass
+        resp = requests.post(wh, json=payload, timeout=10)
+        log(f'Slack response: {resp.status_code}')
+    except Exception as e:
+        log(f'Slack error: {e}')
 
 def msg_entry(game, inn):
     a, h = game['teams']['away'], game['teams']['home']
@@ -97,6 +103,7 @@ def load_state():
         with open(STATE_FILE) as f:
             s = json.load(f)
         if s.get('date') != today():
+            log(f"New day ({today()}), resetting state.")
             raise ValueError('new day')
         return s
     except Exception:
@@ -108,44 +115,67 @@ def save_state(s):
 
 def poll_once(state, wh):
     d     = mlb('schedule', sportId=1, date=today(), hydrate='linescore,team')
-    games = ((d or {}).get('dates') or [{}])[0].get('games', [])
+    dates = (d or {}).get('dates', [])
+    if not dates:
+        log(f'No games found for {today()} (empty dates)')
+        return
+    games = dates[0].get('games', [])
+    log(f'Found {len(games)} game(s) on {today()}')
+
     game  = next((g for g in games
                   if TEAM_ID in (str(g['teams']['home']['team']['id']),
                                   str(g['teams']['away']['team']['id']))), None)
 
-    if not game or game_state(game) not in ('live', 'final'):
+    if not game:
+        team_ids = [(str(g['teams']['home']['team']['id']), str(g['teams']['away']['team']['id'])) for g in games]
+        log(f'No Braves game found. Team IDs in schedule: {team_ids}')
+        return
+
+    gs = game_state(game)
+    coded = game.get('status', {}).get('codedGameState', '?')
+    detail = game.get('status', {}).get('detailedState', '?')
+    log(f'Braves game found — state={gs} coded={coded} detail={detail}')
+
+    if gs not in ('live', 'final'):
         return
 
     try:
         feed = requests.get(
             f'https://statsapi.mlb.com/api/v1.1/game/{game["gamePk"]}/feed/live',
             timeout=15).json()
-    except Exception:
+    except Exception as e:
+        log(f'Feed error: {e}')
         return
 
     ls        = feed.get('liveData', {}).get('linescore', {})
     all_plays = feed.get('liveData', {}).get('plays', {}).get('allPlays', [])
     cur_play  = feed.get('liveData', {}).get('plays', {}).get('currentPlay')
 
+    cur_pitcher_id = str(ls.get('defense', {}).get('pitcher', {}).get('id', ''))
+    cur_pitcher_nm = ls.get('defense', {}).get('pitcher', {}).get('fullName', '?')
+    log(f'Current pitcher: {cur_pitcher_nm} (id={cur_pitcher_id}), looking for id={PLAYER_ID}')
+
     my_id    = str(PLAYER_ID)
-    is_cur   = str(ls.get('defense', {}).get('pitcher', {}).get('id', '')) == my_id
+    is_cur   = cur_pitcher_id == my_id
     my_plays = [p for p in all_plays if str(p.get('matchup', {}).get('pitcher', {}).get('id', '')) == my_id]
     my_done  = [p for p in my_plays if p.get('result', {}).get('eventType')]
     outing   = calc_outing(my_done)
     inn      = inn_txt(ls)
     cur_idx  = (cur_play or {}).get('atBatIndex', -1)
 
+    log(f'is_cur={is_cur} inn={inn} my_plays={len(my_plays)} my_done={len(my_done)} entry_sent={state["entry_sent"]}')
+
     if is_cur and not state['entry_sent']:
         post_slack(wh, msg_entry(game, inn))
         state['entry_sent'] = True
         state['is_pitching'] = True
-        print(f'Entry sent — {inn}')
+        log(f'Entry sent — {inn}')
 
     if is_cur and state['last_ab_idx'] >= 0 and cur_idx != state['last_ab_idx']:
         prev = next((p for p in all_plays if p.get('atBatIndex') == state['last_ab_idx']), None)
         if prev and prev.get('result', {}).get('eventType'):
             post_slack(wh, msg_ab(prev, outing, inn))
-            print(f"AB sent — {prev.get('result',{}).get('event')} by {prev.get('matchup',{}).get('batter',{}).get('fullName','?')}")
+            log(f"AB sent — {prev.get('result',{}).get('event')} by {prev.get('matchup',{}).get('batter',{}).get('fullName','?')}")
 
     if is_cur:
         state['last_ab_idx'] = cur_idx
@@ -154,12 +184,13 @@ def poll_once(state, wh):
     if not is_cur and state['is_pitching'] and my_done:
         post_slack(wh, msg_done(outing, game))
         state['is_pitching'] = False
-        print(f"Done sent — {outing['ip']} IP · {outing['k']}K · {outing['r']}R")
+        log(f"Done sent — {outing['ip']} IP · {outing['k']}K · {outing['r']}R")
 
     state['date'] = today()
 
 def main():
     wh = os.environ.get('SLACK_WEBHOOK_URL', '')
+    log(f'Poller starting — UTC date: {today()}, player_id: {PLAYER_ID}, team_id: {TEAM_ID}')
 
     if os.environ.get('TEST_MODE', '').lower() == 'true':
         post_slack(wh, {
@@ -170,7 +201,7 @@ def main():
                 {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': 'Polling every 30 sec · noon–midnight ET · ldkobs/ritchie-tracker'}]}
             ]
         })
-        print('Test message sent.')
+        log('Test message sent.')
         return
 
     if os.environ.get('TEST_GAME', '').lower() == 'true':
@@ -188,32 +219,38 @@ def main():
         ]
         final_outing = dict(ip='1.0', k=2, bb=1, h=1, r=0)
 
-        print('Sending entry…')
+        log('Sending entry…')
         post_slack(wh, msg_entry(fake_game, '▼7'))
         time.sleep(8)
 
         for play, outing in zip(fake_plays, outings):
-            print(f"Sending AB: {play['result']['event']}…")
+            log(f"Sending AB: {play['result']['event']}…")
             post_slack(wh, msg_ab(play, outing, '▼7'))
             time.sleep(8)
 
-        print('Sending outing complete…')
+        log('Sending outing complete…')
         post_slack(wh, msg_done(final_outing, fake_game))
-        print('Simulation done.')
+        log('Simulation done.')
         return
 
     state = load_state()
+    log(f'Loaded state: {state}')
     start = time.time()
+    iteration = 0
 
     while True:
+        iteration += 1
+        log(f'--- Poll #{iteration} ---')
         poll_once(state, wh)
         elapsed = time.time() - start
         if elapsed + POLL_INTERVAL >= LOOP_DURATION:
             break
-        print(f'Sleeping 30s ({int(LOOP_DURATION - elapsed)}s remaining)…')
+        log(f'Sleeping 30s ({int(LOOP_DURATION - elapsed)}s remaining)…')
+        sys.stdout.flush()
         time.sleep(POLL_INTERVAL)
 
     save_state(state)
+    log(f'Done. Final state: {state}')
 
 if __name__ == '__main__':
     main()
