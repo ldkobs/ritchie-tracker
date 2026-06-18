@@ -640,14 +640,12 @@ function slackAtBat(play, outing, inn) {
 function slackFinished(outing, game, innings) {
   const h = game.teams?.home, a = game.teams?.away;
   const ip = parseFloat(outing.ip) || 0;
-  const perf = outing.r === 0 ? '🟢 Clean outing' : outing.r <= 1 ? '🟡 Solid outing' : '🔴 Rough outing';
   const fields = [{ type:'mrkdwn', text:`*Final Line*\n${ol(outing)}` }];
   if (innings) fields.push({ type:'mrkdwn', text:`*Innings Pitched*\n${innings}` });
   fields.push({ type:'mrkdwn', text:`*K/IP*\n${ip?(outing.k/ip).toFixed(1):'—'}` });
   fields.push({ type:'mrkdwn', text:`*WHIP*\n${ip?((outing.bb+outing.h)/ip).toFixed(2):'—'}` });
   return { text:`✅ Ritchie's final — ${outing.ip} IP · ${outing.k}K · ${outing.r}R`, blocks:[
     { type:'header', text:{ type:'plain_text', text:'✅  Game Over — J.R. Ritchie', emoji:true }},
-    { type:'section', text:{ type:'mrkdwn', text:`${perf}` }},
     { type:'section', fields },
     { type:'divider' },
     { type:'context', elements:[{ type:'mrkdwn', text:`${a?.team?.name||'Away'} ${a?.score??0} – ${h?.score??0} ${h?.team?.name||'Home'} · Final` }]}
@@ -852,7 +850,6 @@ function rpDone(outing, myDone, inn) {
   setHdrSub(`Done · ${outing.ip} IP  ${outing.k}K  ${outing.r}R`);
   const ip = parseFloat(outing.ip)||0;
   const innings = inningsPitchedLabel(myDone);
-  const perf = outing.r===0?['🟢 Clean','clean']:outing.r<=1?['🟡 Solid','solid']:['🔴 Rough','rough'];
   return `
     <div class="rp-wrap">
       <div class="rp-board">
@@ -863,12 +860,7 @@ function rpDone(outing, myDone, inn) {
           <span class="rp-meta">${innings?`Pitched ${innings}`:inn}</span>
         </div>
         <div class="rp-live-body">
-          <div class="rp-perf-row">
-            <span class="rp-perf ${perf[1]}">${perf[0]}</span>
-            <div class="rp-kpis">
-              ${ip?`<div class="rp-kpi-val">${(outing.k/ip).toFixed(1)}<div class="rp-kpi-lbl">K/IP</div></div><div class="rp-kpi-val">${((outing.bb+outing.h)/ip).toFixed(2)}<div class="rp-kpi-lbl">WHIP</div></div>`:''}
-            </div>
-          </div>
+          ${ip?`<div class="rp-perf-row"><div class="rp-kpis"><div class="rp-kpi-val">${(outing.k/ip).toFixed(1)}<div class="rp-kpi-lbl">K/IP</div></div><div class="rp-kpi-val">${((outing.bb+outing.h)/ip).toFixed(2)}<div class="rp-kpi-lbl">WHIP</div></div></div></div>`:''}
           <div class="rp-stats">${statBox('IP',outing.ip)}${statBox('K',outing.k)}${statBox('BB',outing.bb)}${statBox('H',outing.h)}${statBox('R',outing.r)}</div>
         </div>
         ${myDone.length?`<div class="rp-log"><div class="rp-log-lbl">At-Bat Log</div>${abLogHtml(myDone)}</div>`:''}

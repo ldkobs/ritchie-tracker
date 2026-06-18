@@ -101,13 +101,11 @@ def msg_entry(game, inn):
 
 def msg_done(outing, game, innings):
     a, h = game['teams']['away'], game['teams']['home']
-    perf = '🟢 Clean' if outing['r'] == 0 else '🟡 Solid' if outing['r'] <= 1 else '🔴 Rough'
     fields = [{'type': 'mrkdwn', 'text': f"*Final Line*\n{ol(outing)}"}]
     if innings:
         fields.append({'type': 'mrkdwn', 'text': f"*Innings Pitched*\n{innings}"})
     return {'text': f"✅ Ritchie's final — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': [
         {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Game Over — J.R. Ritchie', 'emoji': True}},
-        {'type': 'section', 'text': {'type': 'mrkdwn', 'text': f"{perf} outing"}},
         {'type': 'section', 'fields': fields},
         {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': f"{a['team']['name']} {a['score']} – {h['score']} {h['team']['name']} · Final"}]}
     ]}
