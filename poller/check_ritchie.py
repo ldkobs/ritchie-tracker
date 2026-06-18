@@ -57,6 +57,26 @@ def innings_pitched_label(plays, pid):
         return ordinal(innings[0])
     return f'{ordinal(innings[0])}–{ordinal(innings[-1])}'
 
+def ab_log_lines(plays, pid):
+    """One line per completed at-bat Ritchie faced: emoji + result + batter."""
+    my_id = str(pid)
+    lines = []
+    for p in plays:
+        if str(p.get('matchup', {}).get('pitcher', {}).get('id', '')) != my_id:
+            continue
+        evt = (p.get('result', {}).get('eventType') or '').lower()
+        if not evt:
+            continue
+        name = p.get('result', {}).get('event') or 'Out'
+        em = ('🔴' if 'strikeout' in evt
+              else '🔵' if evt in ('walk', 'intent_walk')
+              else '💣' if evt == 'home_run'
+              else '🟡' if evt in ('single', 'double', 'triple')
+              else '⚫')
+        bat = p.get('matchup', {}).get('batter', {}).get('fullName') or '?'
+        lines.append(f"{em} {name} — {bat}")
+    return lines
+
 def outing_from_boxscore(feed, pid):
     """Authoritative final line straight from the boxscore — matches the website."""
     my_id = str(pid)
@@ -99,16 +119,22 @@ def msg_entry(game, inn):
         {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': "You'll get his full line when the game ends."}]}
     ]}
 
-def msg_done(outing, game, innings):
+def msg_done(outing, game, innings, ab_lines):
     a, h = game['teams']['away'], game['teams']['home']
     fields = [{'type': 'mrkdwn', 'text': f"*Final Line*\n{ol(outing)}"}]
     if innings:
         fields.append({'type': 'mrkdwn', 'text': f"*Innings Pitched*\n{innings}"})
-    return {'text': f"✅ Ritchie's final — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': [
+    blocks = [
         {'type': 'header', 'text': {'type': 'plain_text', 'text': '✅  Game Over — J.R. Ritchie', 'emoji': True}},
         {'type': 'section', 'fields': fields},
-        {'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': f"{a['team']['name']} {a['score']} – {h['score']} {h['team']['name']} · Final"}]}
-    ]}
+    ]
+    if ab_lines:
+        blocks.append({'type': 'divider'})
+        blocks.append({'type': 'section', 'text': {'type': 'mrkdwn',
+            'text': '*Batters Faced*\n' + '\n'.join(ab_lines)}})
+    blocks.append({'type': 'context', 'elements': [{'type': 'mrkdwn',
+        'text': f"{a['team']['name']} {a['score']} – {h['score']} {h['team']['name']} · Final"}]})
+    return {'text': f"✅ Ritchie's final — {outing['ip']} IP · {outing['k']}K · {outing['r']}R", 'blocks': blocks}
 
 def blank_game_state():
     return {'entry_sent': False, 'done_sent': False, 'is_pitching': False}
@@ -198,7 +224,8 @@ def poll_once(state, wh):
         if gs == 'final' and appeared and not gst['done_sent']:
             outing   = bs_outing or dict(ip='0', k=0, bb=0, h=0, r=0)
             innings  = innings_pitched_label(all_plays, PLAYER_ID)
-            post_slack(wh, msg_done(outing, game, innings))
+            ab_lines = ab_log_lines(all_plays, PLAYER_ID)
+            post_slack(wh, msg_done(outing, game, innings, ab_lines))
             gst['done_sent']   = True
             gst['is_pitching'] = False
             log(f"  Done sent — {outing['ip']} IP · {outing['k']}K · {outing['r']}R ({innings})")
@@ -230,8 +257,10 @@ def main():
         post_slack(wh, msg_entry(fake_game, '▼8'))
         time.sleep(8)
 
+        sample_abs = ['🔴 Strikeout — C. Yelich', '🟡 Single — W. Contreras',
+                      '💣 Home Run — M. Ozuna', '⚫ Groundout — M. Toglia']
         log('Sending game-over final line…')
-        post_slack(wh, msg_done(final_outing, fake_game, '8th–9th'))
+        post_slack(wh, msg_done(final_outing, fake_game, '8th–9th', sample_abs))
         log('Simulation done.')
         return
 

@@ -637,19 +637,24 @@ function slackAtBat(play, outing, inn) {
     { type:'section', text:{ type:'mrkdwn', text:`*Outing Line*\n${ol(outing)}` }}
   ]};
 }
-function slackFinished(outing, game, innings) {
+function slackFinished(outing, game, innings, abLines) {
   const h = game.teams?.home, a = game.teams?.away;
   const ip = parseFloat(outing.ip) || 0;
   const fields = [{ type:'mrkdwn', text:`*Final Line*\n${ol(outing)}` }];
   if (innings) fields.push({ type:'mrkdwn', text:`*Innings Pitched*\n${innings}` });
   fields.push({ type:'mrkdwn', text:`*K/IP*\n${ip?(outing.k/ip).toFixed(1):'—'}` });
   fields.push({ type:'mrkdwn', text:`*WHIP*\n${ip?((outing.bb+outing.h)/ip).toFixed(2):'—'}` });
-  return { text:`✅ Ritchie's final — ${outing.ip} IP · ${outing.k}K · ${outing.r}R`, blocks:[
+  const blocks = [
     { type:'header', text:{ type:'plain_text', text:'✅  Game Over — J.R. Ritchie', emoji:true }},
     { type:'section', fields },
-    { type:'divider' },
-    { type:'context', elements:[{ type:'mrkdwn', text:`${a?.team?.name||'Away'} ${a?.score??0} – ${h?.score??0} ${h?.team?.name||'Home'} · Final` }]}
-  ]};
+  ];
+  if (abLines && abLines.length) {
+    blocks.push({ type:'divider' });
+    blocks.push({ type:'section', text:{ type:'mrkdwn', text:`*Batters Faced*\n${abLines.join('\n')}` }});
+  }
+  blocks.push({ type:'divider' });
+  blocks.push({ type:'context', elements:[{ type:'mrkdwn', text:`${a?.team?.name||'Away'} ${a?.score??0} – ${h?.score??0} ${h?.team?.name||'Home'} · Final` }]});
+  return { text:`✅ Ritchie's final — ${outing.ip} IP · ${outing.k}K · ${outing.r}R`, blocks };
 }
 
 /* ── Boxscore fallback ─────────────────────────────────────────────── */
@@ -699,6 +704,14 @@ function inningsPitchedLabel(plays){
   if(!innings.length)return'';
   return innings.length===1?ordinal(innings[0]):`${ordinal(innings[0])}–${ordinal(innings[innings.length-1])}`;
 }
+function abLogLines(plays){
+  return (plays||[]).filter(p=>p.result?.eventType).map(p=>{
+    const evt=(p.result?.eventType||'').toLowerCase();
+    const name=p.result?.event||'Out';
+    const em=evt.includes('strikeout')?'🔴':evt==='walk'||evt==='intent_walk'?'🔵':evt==='home_run'?'💣':['single','double','triple'].includes(evt)?'🟡':'⚫';
+    return `${em} ${name} — ${p.matchup?.batter?.fullName||'?'}`;
+  });
+}
 
 /* ── HTML builders ─────────────────────────────────────────────────── */
 function pipDots(events) {
@@ -711,7 +724,7 @@ function pipDots(events) {
 }
 function statBox(l,v){return `<div class="rp-stat"><div class="rp-stat-val">${v}</div><div class="rp-stat-lbl">${l}</div></div>`;}
 function abLogHtml(plays){
-  return plays.slice(-6).reverse().map(p=>{
+  return plays.slice().reverse().map(p=>{
     const{code,cls}=abResult(p);
     return `<div class="log-row"><span class="log-code ${cls}">${code}</span><span class="log-batter">${p.matchup?.batter?.fullName||'?'}</span><span class="log-ev">${p.result?.event||''}</span></div>`;
   }).join('');
@@ -1125,7 +1138,7 @@ async function runPoll() {
     if(soxState==='final'&&!S.doneSent&&CFG.notifyDone){
       const bs=outingFromBoxscore(liveFeed,pid);
       if(bs||myDone.length){
-        await sendSlack(slackFinished(bs||outing, soxGame, inningsPitchedLabel(myDone)));
+        await sendSlack(slackFinished(bs||outing, soxGame, inningsPitchedLabel(myDone), abLogLines(myDone)));
         S.doneSent=true;
       }
     }
